@@ -16,40 +16,49 @@ import (
 //
 // ─────────────────────────────────────────────────────────────
 func demoBuffer(n int) {
-	fmt.Printf("\n── 1. ขนาด buffer มีผลกับความเร็วแค่ไหน (ส่ง %d ค่า) ──\n\n", n)
-	fmt.Println("  buffer │     เวลา │ ต่อ 1 ค่า │ เทียบ unbuffered")
-	fmt.Println("  ───────┼──────────┼───────────┼─────────────────")
+	// fmt.Printf("\n── 1. ขนาด buffer มีผลกับความเร็วแค่ไหน (ส่ง %d ค่า) ──\n\n", n)
+	// fmt.Println("  buffer │     เวลา │ ต่อ 1 ค่า │ เทียบ unbuffered")
+	// fmt.Println("  ───────┼──────────┼───────────┼─────────────────")
 
-	var base time.Duration
-	for _, size := range []int{0, 1, 10, 100, 1000} {
+	// var base time.Duration
+	for _, size := range []int{0} {
 		ch := make(chan int, size)
 
 		var wg sync.WaitGroup
-		wg.Add(1)
+
+		for j := range 2 {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				for j := range n {
+					ch <- j
+				}
+
+			}(j)
+		}
+
 		go func() {
-			defer wg.Done()
-			for range ch {
-			}
+			wg.Wait()
+			close(ch)
 		}()
 
-		start := time.Now()
-		for i := 0; i < n; i++ {
-			ch <- i
+		// start := time.Now()
+		for i := range ch {
+			fmt.Println("work := ", i)
 		}
-		close(ch)
-		wg.Wait()
-		elapsed := time.Since(start)
 
-		if size == 0 {
-			base = elapsed
-		}
-		fmt.Printf("  %6d │ %8v │ %7.0f ns │ %.2fx\n",
-			size, elapsed.Round(time.Millisecond),
-			float64(elapsed.Nanoseconds())/float64(n),
-			float64(base)/float64(elapsed))
+		// elapsed := time.Since(start)
+
+		// if size == 0 {
+		// 	base = elapsed
+		// }
+		// fmt.Printf("  %6d │ %8v │ %7.0f ns │ %.2fx\n",
+		// 	size, elapsed.Round(time.Millisecond),
+		// 	float64(elapsed.Nanoseconds())/float64(n),
+		// 	float64(base)/float64(elapsed))
 	}
-	fmt.Println("\n  อ่านผล: buffer ช่วยลด \"จำนวนครั้งที่ต้องนัดเจอกัน\" ไม่ได้ทำให้ CPU เร็วขึ้น")
-	fmt.Println("          พอ buffer ใหญ่พอที่ผู้รับตามทัน เพิ่มต่อก็ไม่ช่วยแล้ว")
+	// fmt.Println("\n  อ่านผล: buffer ช่วยลด \"จำนวนครั้งที่ต้องนัดเจอกัน\" ไม่ได้ทำให้ CPU เร็วขึ้น")
+	// fmt.Println("          พอ buffer ใหญ่พอที่ผู้รับตามทัน เพิ่มต่อก็ไม่ช่วยแล้ว")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -239,4 +248,55 @@ func demoRules() {
 // (ต่างจาก time.Sleep ที่ runtime จัดการเองด้วย timer ภายใน)
 func sysSelect(tv *syscall.Timeval) error {
 	return syscall.Select(0, nil, nil, nil, tv)
+}
+
+// ─────────────────────────────────────────────────────────────
+// 6) receiver หลายตัวไม่ได้แบ่งงานเท่ากัน
+//
+//	channel แจกของแฟร์ (คิวรอเป็น FIFO) แต่ scheduler ไม่ได้บังคับให้สลับกัน
+//	receiver ที่ไม่เคยต้องรอ = ไม่เคยปล่อย CPU = กินรวบ
+//
+// ─────────────────────────────────────────────────────────────
+func demoFairness(r, n int) {
+	fmt.Printf("\n── 6. receiver %d ตัวแย่งของจาก channel เดียวกัน ใครได้เท่าไร ──\n\n", r)
+	fmt.Printf("  GOMAXPROCS=%d · ส่ง %d ค่า · buffer=100\n\n", runtime.GOMAXPROCS(0), n)
+
+	row := func(label string, slow bool) {
+		ch := make(chan int, 100)
+		got := make([]int, r)
+
+		var wg sync.WaitGroup
+		wg.Add(r)
+		for i := 0; i < r; i++ {
+			go func(id int) {
+				defer wg.Done()
+				for range ch {
+					got[id]++ // ต่างคนต่างนับช่องตัวเอง ไม่ต้อง lock
+				}
+			}(i)
+		}
+
+		for i := 0; i < n; i++ {
+			ch <- i
+			if slow {
+				time.Sleep(50 * time.Microsecond) // ให้ผู้รับดูดจนหมดก่อน
+			}
+		}
+		close(ch)
+		wg.Wait()
+
+		fmt.Printf("  %-34s │ ", label)
+		for i, c := range got {
+			fmt.Printf("G%d=%-5d ", i, c)
+		}
+		fmt.Println()
+	}
+
+	row("ผู้ส่งเร็ว (channel มีของตลอด)", false)
+	row("ผู้ส่งช้า (channel ว่างจริง)", true)
+
+	fmt.Println("\n  อ่านผล: แถวล่างแบ่งเกือบเท่ากัน → คิวรอของ channel เป็น FIFO แฟร์อยู่แล้ว")
+	fmt.Println("          แถวบนกินรวบเพราะ for range ยอมปล่อย CPU เฉพาะตอน channel ว่าง")
+	fmt.Println("          ผู้ส่งเติมของทัน → ตัวที่รันอยู่ไม่เคยต้องหยุด → ตัวอื่นไม่ได้คิวเลย")
+	fmt.Println("          ลองใหม่ด้วย GOMAXPROCS=1 จะเห็นชัดว่าเป็นตัวที่สร้างท้ายสุดเสมอ")
 }

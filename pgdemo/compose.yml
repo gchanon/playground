@@ -1,0 +1,51 @@
+# PostgreSQL สำหรับ pgdemo — ตั้งใจ fix ค่าไว้เพื่อให้ผลวัด "ซ้ำได้"
+#
+#   docker compose up -d      เปิด
+#   docker compose down -v    ปิดและลบข้อมูลทิ้ง
+#
+# ทำไมถึงตั้งค่าพวกนี้
+#   shared_buffers=16MB   เล็กพอที่จะสร้างตารางใหญ่กว่า cache ได้โดยไม่กินดิสก์เยอะ (demo buffers)
+#                         ของจริงบน prod ตั้งกันที่ ~25% ของ RAM
+#   autovacuum=off        ไม่งั้นแม่บ้านมาเก็บกวาดกลางคัน ตัวเลข demo mvcc จะไม่นิ่ง
+#   deadlock_timeout=1s   PG จะเริ่มมองหา deadlock หลังรอนานเกิน 1 วิ (demo lock)
+#   fsync                 ปล่อยเป็น default (on) — demo commit ต้องการ fsync จริง
+name: pgdemo
+
+services:
+  pg:
+    image: postgres:17-alpine
+    container_name: pgdemo
+    environment:
+      POSTGRES_PASSWORD: pgdemo
+      POSTGRES_DB: pgdemo
+    ports:
+      - "55432:5432"       # ไม่ใช้ 5432 กันชนกับ PG ที่อาจมีในเครื่อง
+    volumes:
+      - pgdemo-data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    command:
+      - postgres
+      - -c
+      - shared_buffers=16MB
+      - -c
+      - autovacuum=off
+      - -c
+      - deadlock_timeout=1s
+      - -c
+      - log_lock_waits=on
+      - -c
+      - max_connections=50
+      - -c
+      - track_io_timing=on
+      - -c
+      - max_wal_size=256MB      # จำกัดไม่ให้ WAL บวมกินดิสก์ตอนรัน demo ซ้ำๆ
+      - -c
+      - min_wal_size=64MB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pgdemo"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pgdemo-data:

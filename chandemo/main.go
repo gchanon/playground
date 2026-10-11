@@ -45,9 +45,10 @@ func probe(op func()) string {
 }
 
 func main() {
-	demo := flag.String("demo", "all", "all | buffer | rendezvous | park | random | rules")
-	n := flag.Int("n", 100000, "จำนวนข้อความที่ส่ง (demo buffer / random)")
-	g := flag.Int("g", 1000, "จำนวน goroutine ที่จอดรอ (demo park)")
+	demo := flag.String("demo", "all", "all | buffer | rendezvous | park | random | rules | fair")
+	// n := flag.Int("n", 100000, "จำนวนข้อความที่ส่ง (demo buffer / random)")
+	// g := flag.Int("g", 1000, "จำนวน goroutine ที่จอดรอ (demo park)")
+	// r := flag.Int("r", 5, "จำนวน receiver (demo fair)")
 	flag.Parse()
 
 	fmt.Printf("\n=== เครื่องนี้: NumCPU=%d  GOMAXPROCS=%d ===\n",
@@ -59,11 +60,12 @@ func main() {
 		}
 	}
 
-	run("buffer", func() { demoBuffer(*n) })
-	run("rendezvous", func() { demoRendezvous() })
-	run("park", func() { demoPark(*g) })
-	run("random", func() { demoSelectRandom(*n) })
-	run("rules", func() { demoRules() })
+	run("buffer", func() { demoBuffer(5) })
+	// run("rendezvous", func() { demoRendezvous() })
+	// run("park", func() { demoPark(*g) })
+	// run("random", func() { demoSelectRandom(*n) })
+	// run("rules", func() { demoRules() })
+	// run("fair", func() { demoFairness(*r, 1000) })
 
 	fmt.Println()
 }
