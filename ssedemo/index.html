@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SSE Quote Demo</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 24px; max-width: 980px; }
+  .row { display: flex; gap: 24px; flex-wrap: wrap; }
+  .col { flex: 1 1 400px; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { padding: 4px 8px; border-bottom: 1px solid #ddd; text-align: left; }
+  tr.new { background: #fff3b0; transition: background 1s; }
+  .cache { color: #0a7d32; } .live { color: #1554c0; } .skip { color: #b00020; }
+  pre { background: #f4f4f4; padding: 8px; height: 420px; overflow: auto; font-size: 12px; }
+  #status { font-weight: bold; margin: 12px 0; }
+</style>
+</head>
+<body>
+<h2>เทียบราคาประกันรถ (SSE)</h2>
+<input id="car" value="yaris-2020">
+<button id="go">ขอราคา</button>
+<span>ลองกดซ้ำด้วยรถคันเดิม จะเห็นเจ้าที่ตอบทันแล้วมาจาก cache ภายใน 0 ms</span>
+<div id="status"></div>
+
+<div class="row">
+  <div class="col">
+    <h3>รายการที่ผู้ใช้เห็น (เรียงตามราคาใหม่ทุกครั้งที่มีราคาเข้ามา)</h3>
+    <table><thead><tr><th>#</th><th>เจ้า</th><th>ราคา</th><th>มาจาก</th><th>ได้ตอน</th></tr></thead>
+    <tbody id="list"></tbody></table>
+    <p id="skipped" class="skip"></p>
+  </div>
+  <div class="col">
+    <h3>event ดิบตามลำดับที่มาถึง</h3>
+    <pre id="log"></pre>
+  </div>
+</div>
+
+<script>
+let es; // EventSource ปัจจุบัน
+
+document.getElementById('go').onclick = () => {
+  if (es) es.close();
+  const quotes = [], skipped = [];
+  const list = document.getElementById('list');
+  const log = document.getElementById('log');
+  const status = document.getElementById('status');
+  list.innerHTML = ''; log.textContent = ''; document.getElementById('skipped').textContent = '';
+  status.textContent = 'กำลังขอราคา… ได้แล้ว 0 / 20';
+
+  // เปิด connection เดียวค้างไว้ server จะส่ง event มาเรื่อย ๆ
+  es = new EventSource('/quotes?car=' + encodeURIComponent(document.getElementById('car').value));
+
+  const logRaw = (type, data) => { log.textContent += `event: ${type}\ndata: ${data}\n\n`; log.scrollTop = log.scrollHeight; };
+
+  es.addEventListener('quote', e => {
+    logRaw('quote', e.data);
+    const q = JSON.parse(e.data);
+    quotes.push(q);
+    quotes.sort((a, b) => a.price - b.price); // แค่ 20 รายการ เรียงใหม่ทั้งก้อนทุกรอบได้สบาย
+    list.innerHTML = quotes.map((x, i) =>
+      `<tr class="${x === q ? 'new' : ''}"><td>${i + 1}</td><td>${x.insurer}</td>` +
+      `<td>${x.price.toLocaleString()}</td><td class="${x.source}">${x.source}</td><td>${x.ms} ms</td></tr>`).join('');
+    status.textContent = `กำลังขอราคา… ได้แล้ว ${quotes.length} / 20`;
+  });
+
+  es.addEventListener('skip', e => {
+    logRaw('skip', e.data);
+    const s = JSON.parse(e.data);
+    skipped.push(`${s.insurer} (${s.error})`);
+    document.getElementById('skipped').textContent = 'ไม่พร้อมตอนนี้: ' + skipped.join(', ');
+  });
+
+  es.addEventListener('done', e => {
+    logRaw('done', e.data);
+    const d = JSON.parse(e.data);
+    status.textContent = `ปิดรายการ: ได้ราคา ${d.got} / ${d.total} เจ้า ใช้เวลา ${d.ms} ms` +
+      (d.pending ? ` — อีก ${d.pending} เจ้ากำลังดึงต่อเบื้องหลัง ลองกดใหม่ภายหลังจะได้จาก cache` : '');
+    es.close(); // ต้องปิดเอง ไม่งั้น EventSource จะ reconnect แล้วขอราคาใหม่อัตโนมัติ
+  });
+};
+</script>
+</body>
+</html>
